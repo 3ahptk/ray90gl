@@ -4,8 +4,8 @@ program raygl
     use opengl_glu
     use opengl_glut
     
-    implicit none  
-
+    implicit none
+    
     type ray
     real, dimension(0:2) :: origin
     real, dimension(0:2) :: direction
@@ -16,20 +16,14 @@ program raygl
       real, dimension(0:2) :: p
       real, dimension(0:2) :: normal
     end type hit_record
-
-    type sphere
-      real, dimension(0:2)  :: center
-      real :: radius
-    end type sphere
-
-    type camera
-      real, dimension(0:2) :: origin
-      real, dimension(0:2) :: lower_left_corner
-      real, dimension(0:2) :: horizontal
-      real, dimension(0:2) :: vertical
-      real :: scale
-    end type camera
     
+    integer, parameter   :: nx = 500
+    integer, parameter   :: ny = 500  
+    integer              :: i, j, ir, ig, ib, dummy, inp = 0
+    real                 :: u, v, PI
+    character            :: c
+    real, dimension(0:2) :: col,lower_left_corner,horizontal,vertical,origin,forwards_back,left_right
+    type(ray) :: r
     integer :: handle
     
     call glutinit
@@ -37,7 +31,7 @@ program raygl
     call glutInitWindowSize(500_glcint,500_glcint)
     call glutInitWindowPosition (0_glcint, 0_glcint)
     handle = glutCreateWindow ("Raytrace Sphere Test")
-    !call glutSpecialFunc(processNormalKeys)
+    call glutSpecialFunc(processNormalKeys)
     call glutDisplayFunc(display)
     call glutIdleFunc(display)
     call myinit
@@ -52,6 +46,12 @@ program raygl
           call glLoadIdentity
           call gluOrtho2D(0.0_gldouble, 500.0_gldouble, 0.0_gldouble, 500.0_gldouble)
           call glMatrixMode(GL_MODELVIEW)
+    
+          PI = 4*atan(1.)
+          lower_left_corner = [-2.0, -1.0, -1.0]
+          horizontal = [4.0, 0.0, 0.0]
+          vertical = [0.0, 2.0, 0.0]
+          origin = [0.0, 0.0, 0.0]
     
         end subroutine myinit
     
@@ -81,93 +81,70 @@ program raygl
           integer(kind=glint) , intent(in out) :: key
           integer(kind=glcint) , intent(in out) :: x, y
     
-         !select case (key)
-         !  case(iachar('W'),iachar('w'))  !w 
-         !    call turn_y(vertical,-PI/16.)
-         !end select
-        end subroutine processNormalKeys
-
-        subroutine get_camera_ray(u, v, c, o)
-          real,intent(in)  :: u
-          real,intent(in)  :: v
-          type(camera),intent(in) :: c
-          type(ray),intent(out) :: o
-          o%origin = c%origin
-          o%direction = c%lower_left_corner + u*c%horizontal + v*c%vertical - c%origin           
-        end subroutine get_camera_ray
+          call cross(forwards_back,horizontal,vertical)
+          call norm(forwards_back)
+          call cross(left_right,vertical,forwards_back)
+          call norm(left_right)
     
-        subroutine color(r, reflect, o)
+          select case (key)
+            case(iachar('W'),iachar('w'))  !w 
+              origin = origin - forwards_back/16.
+            case(iachar('A'),iachar('a'))  !a
+              origin = origin - left_right/16.
+            case(iachar('S'),iachar('s'))  !s
+              origin = origin + forwards_back/16.
+            case(iachar('D'),iachar('d'))  !d
+              origin = origin + left_right/16.
+            case(iachar('Q'),iachar('q'))  !q
+              call turn_y(lower_left_corner,PI/16.)
+              call turn_y(horizontal,PI/16.)
+              call turn_y(vertical,PI/16.)
+            case(iachar('E'),iachar('e'))  !e
+              call turn_y(lower_left_corner,-PI/16.)
+              call turn_y(horizontal,-PI/16.)
+              call turn_y(vertical,-PI/16.)
+          end select
+        end subroutine processNormalKeys
+    
+        subroutine color(r, o)
             type(ray),intent(inout) :: r
-            logical, intent(in) :: reflect
-            logical :: hit_any
             real, dimension(0:2), intent(inout) :: o
             real, dimension(0:2) :: unit_direction, o2, N
             real :: t, h
       
-            hit_any = .false.
-            hit_record temp_rec = new hit_record()
-            hit_record rec = new hit_record()
-            float closest = float.MaxValue
-
-            do concurrent(var o in objects)
-                if (o.hit(r, 0.001, closest, out temp_rec)) then
-                    hit_any = .true.
-                    closest = temp_rec.t
-                    rec = temp_rec
-                end if
-            end do
-
-            if (hit_any && reflect>0) then
-                vec3 target = rec.p + rec.normal !+ random_unit_in_sphere()
-                return 0.5 * color(new ray(rec.p, target - rec.p), --reflect)
+            call hit_sphere([0.0,0.0,-1.0], 0.5, r, h)
+      
+            if ( h > 0.0 ) then
+              call point_at_parameter(r,h,o2)
+              call unit_vector( o2 - [0.0,0.0,-1.0] , N )
+              o = 0.5*[N(0)+1, N(1)+1, N(2)+1]
+              return
             end if
-
-            vec3 unit_dir = vec3.unit_vector(r.direction)
-            float t = 0.5 * (unit_dir.y + 1.0)
-            return (1.0 - t) * [1.0, 1.0, 1.0] + t * [0.5, 0.7, 1.0]
+      
+            call unit_vector(r%direction,unit_direction)
+            t = 0.5 * unit_direction(1) + 1
+            o = (1.0-t) * [1.0,1.0,1.0] + t * [0.5,0.7,1.0]
       
           end subroutine color
-
-        subroutine hit_sphere(r, t_min, t_max, rec, hit)
-          type(ray), intent(in) :: r
-          real, intent(in):: t_min
-          real, intent(in) :: t_max
-          type(hit_record), intent(out) rec
-          logical, intent(out) :: hit
-
-          real, dimension(0:2) :: oc
-          real :: a,b,c,discriminant
-          oc = r%origin - center
-          a = dot_product(r%direction,r%direction)
-          b = 2.0 * dot_product(oc,r%direction)
-          c = dot_product(oc,oc) - radius*radius
-          discriminant = b * b - a * c
-          if (discriminant > 0) then          
-              temp = ((-b - sqrt(discriminant)) / a)
-              if (temp < t_max && temp > t_min) then             
-                  rec%t = temp
-                  call point_at_parameter(r,rec%t,rec%p)
-                  rec%normal = (rec%p - center) / radius
-                  hit = .true.
-                  return
-                end if
-              temp = ((-b + sqrt(discriminant)) / a)
-              if (temp < t_max && temp > t_min) then             
-                  rec%t = temp
-                  call point_at_parameter(r,rec%t,rec%p)
-                  rec%normal = (rec%p - center) / radius
-                  hit = .true.
-                  return
-              end if
-            end if          
-            hit = .false.
-        end subroutine hit_sphere
-
-          function vec_length(v) result(f)
-            real, dimension(0:2) :: v
-            real :: f
-            f = sqrt(v(0)*v(0) + v(1)*v(1) + v(2)*v(2))              
-          end function length
+      
+          subroutine hit_sphere(center, radius, r, hit)
+            type(ray), intent(in) :: r
+            real, intent(in) :: radius
+            real, dimension(0:2), intent(in) :: center
+            real, intent(inout) :: hit
+            real, dimension(0:2) :: oc
+            real :: a,b,c,discriminant
+            oc = r%origin - center
+            a = dot_product(r%direction,r%direction)
+            b = 2.0 * dot_product(oc,r%direction)
+            c = dot_product(oc,oc) - radius*radius
+            discriminant = b*b - 4*a*c
+            if (discriminant < 0) then
+              hit = -1.0
+            else
+              hit = (-b - sqrt(discriminant)) / (2.0*a)
+            end if
+          end subroutine hit_sphere
       
           subroutine unit_vector(v,v2)
             real, dimension(0:2), intent(in) :: v
@@ -181,6 +158,27 @@ program raygl
             real, dimension(0:2), intent(inout) :: o
             o = r%origin + t*r%direction
           end subroutine point_at_parameter
+    
+          subroutine turn_x(v, d)
+              real, dimension(0:2),intent(inout) :: v
+              real, intent(in) :: d
+              v(1) = cos(d) * v(1) + (-(sin(d))) * v(2)
+              v(2) = sin(d) * v(1) + cos(d) * v(2)
+          end subroutine
+      
+          subroutine turn_y(v, d)
+              real, dimension(0:2),intent(inout) :: v
+              real, intent(in) :: d
+              v(0) = cos(d) * v(0) + sin(d) * v(2)
+              v(2) = (-(sin(d))) * v(0) + cos(d) * v(2)
+          end subroutine turn_y
+      
+          subroutine turn_z(v, d)
+              real, dimension(0:2),intent(inout) :: v
+              real, intent(in) :: d
+              v(0) = cos(d) * v(0) + (-(sin(d))) * v(1)
+              v(1) = sin(d) * v(0) + cos(d) * v(1)
+          end subroutine turn_z
       
           subroutine norm(vec3)
             real,dimension(0:2),intent(inout) :: vec3
